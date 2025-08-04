@@ -1,34 +1,36 @@
 from fastapi import FastAPI, Query
 from pymongo import MongoClient
-from dotenv import load_dotenv
+from fastapi.middleware.cors import CORSMiddleware
+from typing import List
 import os
-
-load_dotenv()  # Loads environment variables from .env if present
 
 app = FastAPI()
 
-# MongoDB connection
-MONGO_URI = os.getenv("MONGO_URI")
+# Allow cross-origin
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Mongo setup
+MONGO_URI = os.environ.get("MONGO_URI")
 client = MongoClient(MONGO_URI)
-db = client.get_database()  # Automatically picks from URI
-collection = db["recipes"]  # Assuming your collection is named 'recipes'
-
-@app.get("/")
-def read_root():
-    return {"message": "Recipe API (MongoDB) is running"}
-
-@app.get("/recipes")
-def get_all_recipes(limit: int = 100):
-    cursor = collection.find({}, {"_id": 0}).limit(limit)
-    return list(cursor)
+db = client.get_database()  # will work if URI ends with /recipes_list
+collection = db["recipes_data"]
 
 @app.get("/search")
-def search_recipes(query: str = Query(...), limit: int = 20):
-    cursor = collection.find({"NER": {"$regex": query, "$options": "i"}}, {"_id": 0}).limit(limit)
-    return list(cursor)
-
-@app.get("/recipes/{index}")
-def get_recipe_by_index(index: int):
-    doc = collection.find().skip(index).limit(1)
-    result = list(doc)
-    return result[0] if result else {"error": "Recipe not found"}
+def search(query: str = Query(...), limit: int = 5):
+    regex = {"$regex": query, "$options": "i"}  # case-insensitive search
+    results = collection.find(
+        {
+            "$or": [
+                {"NER": regex},
+                {"ingredients": regex},
+                {"title": regex},
+            ]
+        }
+    ).limit(limit)
+    return list(results)
