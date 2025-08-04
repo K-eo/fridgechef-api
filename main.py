@@ -1,36 +1,59 @@
-from fastapi import FastAPI, Query
-from pymongo import MongoClient
-from fastapi.middleware.cors import CORSMiddleware
-from typing import List
 import os
+from fastapi import FastAPI, HTTPException, Query
+from pymongo import MongoClient
+from bson.objectid import ObjectId
 
-app = FastAPI()
-
-# Allow cross-origin
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+app = FastAPI(
+    title="FridgeChef Recipe API",
+    description="Search and fetch recipes from MongoDB",
+    version="1.0.0",
 )
 
-# Mongo setup
-MONGO_URI = os.environ.get("MONGO_URI")
-client = MongoClient(MONGO_URI)
-db = client.get_database()  # will work if URI ends with /recipes_list
-collection = db["recipes_data"]
+# 1. Load MongoDB URI from env
+MONGO_URI = os.getenv("MONGO_URI")
+if not MONGO_URI:
+    raise RuntimeError("Please set the MONGO_URI environment variable")
 
-@app.get("/search")
-def search(query: str = Query(...), limit: int = 5):
-    regex = {"$regex": query, "$options": "i"}  # case-insensitive search
-    results = collection.find(
+# 2. Connect
+client = MongoClient(MONGO_URI)
+db = client["recipes_list"]          # <-- your database name
+collection = db["recipes_data"]      # <-- your collection name
+
+def serialize_doc(doc: dict) -> dict:
+    """
+    Convert MongoDB's ObjectId to string so JSON encoding works.
+    """
+    doc["_id"] = str(doc["_id"])
+    return doc
+
+@app.get("/")
+def root():
+    return {"message": "Welcome to FridgeChef Recipe API"}
+
+@app.get("/search", summary="Search recipes by keyword")
+def search_recipes(
+    query: str = Query(..., min_length=1, description="Search term"),
+    limit: int = Query(5, ge=1, le=100, description="Max number of results"),
+):
+    # Case‐insensitive regex match on multiple fields
+    regex = {"$regex": query, "$options": "i"}
+    cursor = collection.find(
         {
             "$or": [
                 {"NER": regex},
                 {"ingredients": regex},
+                {"directions": regex},
                 {"title": regex},
             ]
         }
     ).limit(limit)
-    return list(results)
+
+    results = [serialize_doc(doc) for doc in cursor]
+    return results
+
+@app.get("/recipes/{number}", summary="Get a recipe by its number")
+def get_recipe(number: int):
+    doc = collection.find_one({"number": number})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    return serialize_doc(doc)
